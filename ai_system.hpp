@@ -17,10 +17,10 @@ struct AIStatus {
 	bool playerNearby = false;
 	bool playerAttackable = false;
 	bool shouldAttack = true;
-	Motion* ai_motion = nullptr;
-	Motion* player_motion = nullptr;
-	Entity* ai_entity = nullptr;
-	Entity* player_entity = nullptr;
+	Motion* aiMotion = nullptr;
+	Motion* playerMotion = nullptr;
+	Entity* aiEntity = nullptr;
+	Entity* playerEntity = nullptr;
 	//random ints from 1-1000 used for random behaviors 
 	int rand = 0;
 	int rand2 = 0;
@@ -105,13 +105,13 @@ class Patrol : public LeafNode{
 				// 91 - 100 makes the mob start moving in a random direction
 
 				if (status->rand >= 97 && status->rand <= 98) {
-					status->ai_motion->velocity = vec2(0,0);
+					status->aiMotion->velocity = vec2(0,0);
 				}
 				if (status->rand >= 99 && status->rand <= 100) {
 					//make mobs move slower than their base speed when patrolling so they "run" at the player when spotting
-					float xvel = ((status->rand % 10) - 4.5) * status->ai_motion->speed/9;
-					float yvel = ((status->rand2 % 10) - 4.5) * status->ai_motion->speed/9;
-					status->ai_motion->velocity = vec2(xvel,yvel);
+					float xvel = ((status->rand % 10) - 4.5) * status->aiMotion->speed/9;
+					float yvel = ((status->rand2 % 10) - 4.5) * status->aiMotion->speed/9;
+					status->aiMotion->velocity = vec2(xvel,yvel);
 				}
 				this->state = NodeState::Running;
 				return this;
@@ -122,25 +122,27 @@ class Patrol : public LeafNode{
 class ChasePlayer : public LeafNode{
 	public:
 		Node* run()  {
-			Motion* enemy_motion = status->ai_motion;
-			Motion* player_motion = status->player_motion;
+			Motion* enemyMotion = status->aiMotion;
+			Motion* playerMotion = status->playerMotion;
+
 			//Case 1: Enemy has reached player, return true and move to attack node
 			if (status->playerAttackable && status->shouldAttack) {
 				this->state = NodeState::True;
 				return this->parent;
+
 			//Case 2: Enemy can see player but has not reached them, return running and keep chasing
 			} else if (status->playerNearby && status->shouldAttack) {
 
 				//move towards the player
-				float ratio = enemy_motion->speed / sqrt(pow(player_motion->position.x - enemy_motion->position.x, 2) + pow(player_motion->position.y - enemy_motion->position.y, 2));
-				enemy_motion->velocity = vec2(ratio * (player_motion->position.x - enemy_motion->position.x), ratio * (player_motion->position.y - enemy_motion->position.y));
+				float ratio = enemyMotion->speed / sqrt(pow(playerMotion->position.x - enemyMotion->position.x, 2) + pow(playerMotion->position.y - enemyMotion->position.y, 2));
+				enemyMotion->velocity = vec2(ratio * (playerMotion->position.x - enemyMotion->position.x), ratio * (playerMotion->position.y - enemyMotion->position.y));
 
 				this->state = NodeState::Running;
 				return this;
 			//Case 3: Enemy has lost sight of player or should no longer be attacking, return to patrol loop
 			} else { 
 				//set velocity to half so enemies visibly stop "running" after losing the player
-				enemy_motion->velocity = enemy_motion->velocity/vec2(2,2);
+				enemyMotion->velocity = enemyMotion->velocity/vec2(2,2);
 				this->state = NodeState::False;
 				return this->parent;
 			}
@@ -152,12 +154,12 @@ class AttackPlayer : public LeafNode {
 public:
 	Node* run() {
 		if (status->playerAttackable && status->shouldAttack) {
-			if (!registry.enemyAttacks.has(*status->ai_entity)) registry.enemyAttacks.emplace(*status->ai_entity);
+			if (!registry.enemyAttacks.has(*status->aiEntity)) registry.enemyAttacks.emplace(*status->aiEntity);
 			this->state = NodeState::Running;
 			return this;
 		}
 		else {
-			if (registry.enemyAttacks.has(*status->ai_entity)) registry.enemyAttacks.remove(*status->ai_entity);
+			if (registry.enemyAttacks.has(*status->aiEntity)) registry.enemyAttacks.remove(*status->aiEntity);
 			this->state = NodeState::False;
 			return this->parent;
 		}
@@ -170,12 +172,12 @@ public:
 class StalkPlayer : public LeafNode {
 public:
 	Node* run() {
-		Player& player = registry.players.get(*status->player_entity);
-		float playerDist = sqrtf(pow((status->ai_motion->position.x-status->player_motion->position.x), 2)  + pow((status->ai_motion->position.y - status->player_motion->position.y), 2));
-		HasAI& ai = registry.hasAIs.get(*status->ai_entity);
+		Player& player = registry.players.get(*status->playerEntity);
+		float playerDist = sqrtf(pow((status->aiMotion->position.x-status->playerMotion->position.x), 2)  + pow((status->aiMotion->position.y - status->playerMotion->position.y), 2));
+		HasAI& ai = registry.hasAIs.get(*status->aiEntity);
 
-		Motion* enemy_motion = status->ai_motion;
-		Motion* player_motion = status->player_motion;
+		Motion* enemyMotion = status->aiMotion;
+		Motion* playerMotion = status->playerMotion;
 
 		if (status->shouldAttack) {
 			//if other enemy is nearby (and thus attacking) return true
@@ -190,25 +192,25 @@ public:
 		//player is visible, not vulnerable, but too far away - approach
 		if (playerDist > ai.detectionRadius * 0.6) {
 				//move towards the player
-				float ratio = enemy_motion->speed / sqrt(pow(player_motion->position.x - enemy_motion->position.x, 2) + pow(player_motion->position.y - enemy_motion->position.y, 2));
-				enemy_motion->velocity = vec2(ratio * (player_motion->position.x - enemy_motion->position.x), ratio * (player_motion->position.y - enemy_motion->position.y));
+				float ratio = enemyMotion->speed / sqrt(pow(playerMotion->position.x - enemyMotion->position.x, 2) + pow(playerMotion->position.y - enemyMotion->position.y, 2));
+				enemyMotion->velocity = vec2(ratio * (playerMotion->position.x - enemyMotion->position.x), ratio * (playerMotion->position.y - enemyMotion->position.y));
 
 				this->state = NodeState::Running;
 				return this;
 
 		} else if (playerDist > ai.detectionRadius * 0.55 && playerDist <= ai.detectionRadius * 0.6) {
 			//Keep same position but face player
-				float ratio = 0.0001 / sqrt(pow(player_motion->position.x - enemy_motion->position.x, 2) + pow(player_motion->position.y - enemy_motion->position.y, 2));
-				enemy_motion->velocity = vec2(ratio * (player_motion->position.x - enemy_motion->position.x), ratio * (player_motion->position.y - enemy_motion->position.y));
+				float ratio = 0.0001 / sqrt(pow(playerMotion->position.x - enemyMotion->position.x, 2) + pow(playerMotion->position.y - enemyMotion->position.y, 2));
+				enemyMotion->velocity = vec2(ratio * (playerMotion->position.x - enemyMotion->position.x), ratio * (playerMotion->position.y - enemyMotion->position.y));
 				this->state = NodeState::Running;
 				return this;	
 
 		} else if (playerDist <= ai.detectionRadius * 0.55) {
 				//move away from the player
-				float ratio = -enemy_motion->speed / sqrt(pow(player_motion->position.x - enemy_motion->position.x, 2) + 
-														  pow(player_motion->position.y - enemy_motion->position.y, 2));
-				enemy_motion->velocity = vec2(ratio * (player_motion->position.x - enemy_motion->position.x), 
-											  ratio * (player_motion->position.y - enemy_motion->position.y));
+				float ratio = -enemyMotion->speed / sqrt(pow(playerMotion->position.x - enemyMotion->position.x, 2) + 
+														  pow(playerMotion->position.y - enemyMotion->position.y, 2));
+				enemyMotion->velocity = vec2(ratio * (playerMotion->position.x - enemyMotion->position.x), 
+											  ratio * (playerMotion->position.y - enemyMotion->position.y));
 				this->state = NodeState::Running;
 				return this;
 		}
@@ -219,27 +221,38 @@ public:
 	}
 };
 
-class AISystem
-{
+class AISystem {
 private:
-	Entity player_entity;
-	Node* skeleton_current_node;
-	Node* goblin_current_node;
-	Node* mushroom_current_node;
-	std::default_random_engine rng;
-	std::uniform_real_distribution<float> uniform_dist; // number between 0..1
+    Entity playerEntity;
+    Node* skeletonCurrentNode;
+    Node* goblinCurrentNode;
+    Node* mushroomCurrentNode;
+    std::default_random_engine rng;
+    std::uniform_real_distribution<float> uniformDist; // number between 0..1
+
+    // Helper functions for behavior tree construction
+    Node* CreateSkeletonBehaviorTree();
+    Node* CreateGoblinBehaviorTree();
+    Node* CreateMushroomBehaviorTree();
+    Selector* CreateRootNode();
+    Patrol* CreatePatrolNode(Node* parent);
+    Sequence* CreateChaseSequenceNode(Node* parent, std::initializer_list<Node*> children);
+    Sequence* CreateSequenceNode(Node* parent);
+    StalkPlayer* CreateStalkPlayerNode(Node* parent);
+
 public:
-	//one ai status for all entities - continually updated
-	AIStatus* status;
-	void step(float elapsed_ms, RenderSystem* renderer);
-	void handle_enemy_attacks(RenderSystem* renderer);
-	void attack_player(Entity damagingEnemy, float damage, RenderSystem* renderer);
-	bool isNearby(Motion& motion1, Motion& motion2, float nearbyRadius);
-	void move_boid(Entity& e);
-	vec2 group_boid(Entity& e);
-	vec2 seperate_boid(Entity& e);
- 	vec2 match_velocity_boid(Entity& e);
-	vec2 chase_player_boid(Entity& e);
-	void avoid_walls_boid(Entity& e);
-	AISystem();
+    // One ai status for all entities - continually updated
+    AIStatus* status;
+
+    AISystem();
+    void Step(float elapsedMs, RenderSystem* renderer);
+    void HandleEnemyAttacks(RenderSystem* renderer);
+    void AttackPlayer(Entity damagingEnemy, float damage, RenderSystem* renderer);
+    bool IsNearby(Motion& motion1, Motion& motion2, float nearbyRadius);
+    void MoveBoid(Entity& entity);
+    vec2 GroupBoid(Entity& entity);
+    vec2 SeparateBoid(Entity& entity);
+    vec2 MatchVelocityBoid(Entity& entity);
+    vec2 ChasePlayerBoid(Entity& entity);
+    void AvoidWallsBoid(Entity& entity);
 };

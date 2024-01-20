@@ -11,66 +11,95 @@ float BOID_SEPERATE_RATIO = 1;
 float BOID_MATCH_RATIO = 1;
 float BOID_CHASE_RATIO = 3;
 
-void AISystem::step(float elapsed_ms, RenderSystem *renderer)
+void AISystem::Step(float elapsedMs, RenderSystem *renderer)
 {
-	// bug tree spaced in manner of it's hierarchy
+    InitializeStatus();
 
-    ComponentContainer<Motion> &motion_container = registry.motions;
-	player_entity = registry.players.entities[0];
-	status->player_entity = &player_entity;
-	for (Entity entity : registry.hasAIs.entities) {
-		HasAI& ai = registry.hasAIs.get(entity);
-		if (registry.enemyAttacks.has(entity)) registry.enemyAttacks.remove(entity);
-		//make sure this isn't called on non-enemies if we ever implement NPCs with AIs
-		Enemy& enemy = registry.enemies.get(entity);
-		status->ai_motion = &registry.motions.get(entity);
-		status->player_motion = &registry.motions.get(player_entity);
-		status->playerNearby = isNearby(*status->ai_motion, *status->player_motion, ai.detectionRadius);
-		status->playerAttackable = isNearby(*status->ai_motion, *status->player_motion, enemy.attackRadius);
-		status->ai_entity = &entity;
-		status->shouldAttack = true;
+    for (Entity entity : registry.hasAIs.entities) {
+        ProcessAI(entity);
+    }
 
-		std::random_device rd; // obtain a random number from hardware
-		std::mt19937 gen(rd()); // seed the generator
-		std::uniform_int_distribution<> distRand(1, 1000);
-		std::uniform_int_distribution<> distRand2(1, 1000); 
-		status->rand = distRand(gen);
-		status->rand2 = distRand2(gen);
+    for (Entity entity: registry.hasAIs.entities) {
+        UpdateEntityMovement(entity);
+    }
 
-		if (ai.type == AIType::Skeleton || ai.type == AIType::MiniBoss) {
-			skeleton_current_node = skeleton_current_node->run();
-
-		//goblin "other enemy" cooperative behavior handled here
-		} else if (ai.type == AIType::Goblin) {
-		for (Entity entity : registry.hasAIs.entities) {
-			status->shouldAttack = false;
-			if (entity != *status->ai_entity) {
-				Motion& other_enemy_motion = registry.motions.get(entity);
-
-				//if other enemy is nearby (and thus attacking) return true
-				if (isNearby(*status->player_motion,other_enemy_motion,120)) {
-					status->shouldAttack = true;
-					break;
-				}
-			}
-		}
-			goblin_current_node = goblin_current_node->run();
-		} else if (ai.type == AIType::Mushroom) {
-			mushroom_current_node = mushroom_current_node->run();
-	}
-	}
-
-	for (Entity entity: registry.hasAIs.entities) {
-		HasAI& ai = registry.hasAIs.get(entity);
-		 if (ai.type == AIType::Bat) {
-			move_boid(entity);
-		}
-	}
-	handle_enemy_attacks(renderer);
+    HandleEnemyAttacks(renderer);
 }
 
+void AISystem::InitializeStatus()
+{
+    playerEntity = registry.players.entities[0];
+    status->playerEntity = &playerEntity;
+}
 
-bool AISystem::isNearby(Motion& motion1, Motion& motion2, float nearbyRadius) {
+void AISystem::ProcessAI(Entity entity)
+{
+    HasAI& ai = registry.hasAIs.get(entity);
+    RemoveEnemyAttackIfPresent(entity);
+
+    UpdateAIStatus(entity, ai);
+
+    if (ai.type == AIType::Skeleton || ai.type == AIType::MiniBoss) {
+        skeletonCurrentNode = skeletonCurrentNode->run();
+    } else if (ai.type == AIType::Goblin) {
+        UpdateGoblinBehavior(entity);
+        goblinCurrentNode = goblinCurrentNode->run();
+    } else if (ai.type == AIType::Mushroom) {
+        mushroomCurrentNode = mushroomCurrentNode->run();
+    }
+}
+
+void AISystem::RemoveEnemyAttackIfPresent(Entity entity)
+{
+    if (registry.enemyAttacks.has(entity)) {
+        registry.enemyAttacks.remove(entity);
+    }
+}
+
+void AISystem::UpdateAIStatus(Entity entity, HasAI& ai)
+{
+    status->aiMotion = &registry.motions.get(entity);
+    status->playerMotion = &registry.motions.get(playerEntity);
+    status->playerNearby = IsNearby(*status->aiMotion, *status->playerMotion, ai.detectionRadius);
+    status->playerAttackable = IsNearby(*status->aiMotion, *status->playerMotion, registry.enemies.get(entity).attackRadius);
+    status->aiEntity = &entity;
+    status->shouldAttack = true;
+
+    GenerateRandomNumbers();
+}
+
+void AISystem::UpdateGoblinBehavior(Entity entity)
+{
+    for (Entity otherEntity : registry.hasAIs.entities) {
+        status->shouldAttack = false;
+        if (otherEntity != entity) {
+            if (IsNearby(*status->playerMotion, registry.motions.get(otherEntity), 120)) {
+                status->shouldAttack = true;
+                break;
+            }
+        }
+    }
+}
+
+void AISystem::GenerateRandomNumbers()
+{
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distRand(1, 1000);
+    std::uniform_int_distribution<> distRand2(1, 1000);
+    status->rand = distRand(gen);
+    status->rand2 = distRand2(gen);
+}
+
+void AISystem::UpdateEntityMovement(Entity entity)
+{
+    HasAI& ai = registry.hasAIs.get(entity);
+    if (ai.type == AIType::Bat) {
+        MoveBoid(entity);
+    }
+}
+
+bool AISystem::IsNearby(Motion& motion1, Motion& motion2, float nearbyRadius) {
 	float dist = sqrtf(pow((motion2.position.x-motion1.position.x), 2)  + pow((motion2.position.y - motion1.position.y), 2));
 	return (dist <= nearbyRadius);
 }
@@ -113,7 +142,7 @@ void AISystem::attack_player(Entity damagingEnemy, float damage, RenderSystem* r
 	}
 }
 
-void AISystem::handle_enemy_attacks(RenderSystem* renderer) {
+void AISystem::HandleEnemyAttacks(RenderSystem* renderer) {
 	if (!registry.deathTimers.has(player_entity)) {
 		for (uint i = 0; i < registry.enemyAttacks.components.size(); i++) {
 			Entity entity_enemy = registry.enemyAttacks.entities[i];
@@ -152,222 +181,240 @@ void AISystem::handle_enemy_attacks(RenderSystem* renderer) {
 	}
 }
 
+void AISystem::MoveBoid(Entity& entity) {
+    vec2 groupVector = GroupBoid(entity);
+    vec2 separateVector = SeparateBoid(entity);
+    vec2 matchVelocityVector = MatchVelocityBoid(entity);
+    vec2 chaseVector = ChasePlayerBoid(entity);
 
-void AISystem::move_boid(Entity& e) {
-	vec2 group_vector = group_boid(e);
-	vec2 seperate_vector = seperate_boid(e);
-	vec2 match_velocity_vector = match_velocity_boid(e);
-	vec2 chase_vector = chase_player_boid(e);
+    Motion& boidMotion = registry.motions.get(entity);
+    vec2 newVel = boidMotion.velocity + (groupVector + separateVector + matchVelocityVector + chaseVector) / vec2(40, 40);
 
-	Motion& boid_motion = registry.motions.get(e);
-	vec2 new_vel = boid_motion.velocity + (group_vector + seperate_vector + match_velocity_vector + chase_vector)/vec2(40,40);
+    newVel = Normalize(newVel) * vec2(boidMotion.speed, boidMotion.speed);
+    boidMotion.velocity = newVel;
 
-	float magnitude = sqrt(pow(new_vel.x, 2) + pow(new_vel.y, 2));
-	magnitude = std::max(0.001f, magnitude);
-	new_vel = new_vel / vec2(magnitude,magnitude);
-	new_vel = new_vel * vec2(boid_motion.speed,boid_motion.speed);
-	boid_motion.velocity = new_vel;
-
-	Motion& player_motion = registry.motions.get(player_entity);
-	HasAI& ai = registry.hasAIs.get(e);
-	if (!isNearby(player_motion,boid_motion,ai.detectionRadius)) {
-	avoid_walls_boid(e);
-	}
+    Motion& playerMotion = registry.motions.get(playerEntity);
+    HasAI& ai = registry.hasAIs.get(entity);
+    if (!IsNearby(playerMotion, boidMotion, ai.detectionRadius)) {
+        AvoidWallsBoid(entity);
+    }
 }
 
-vec2 AISystem::group_boid(Entity& e) {
-	int batcount = 0;
-	vec2 average_pos = {0,0};
-	Motion& entity_motion = registry.motions.get(e);
-	for (Entity other_entity : registry.hasAIs.entities) {
-		HasAI& other_entity_ai = registry.hasAIs.get(other_entity);
-		Motion& other_entity_motion = registry.motions.get(other_entity);
-		if (other_entity == e || other_entity_ai.type != AIType::Bat || !isNearby(other_entity_motion,entity_motion,BOID_GROUPING_RADIUS)) continue;
-		batcount += 1;
-		average_pos += other_entity_motion.position;
-	}
-	if (batcount > 1) {
-	vec2 distance_to_center = (average_pos/vec2(batcount - 1,batcount - 1)) - entity_motion.position;
-	
-	//divide by 80 so boids don't immediately teleport to the center of mass of the swarm
-	return distance_to_center * BOID_GROUP_RATIO / vec2(50,50);
-	}
-	else return vec2(0,0);
+vec2 AISystem::GroupBoid(Entity& entity) {
+    int batCount = 0;
+    vec2 averagePos = {0, 0};
+    Motion& entityMotion = registry.motions.get(entity);
+
+    for (Entity otherEntity : registry.hasAIs.entities) {
+        if (ShouldConsiderForGrouping(otherEntity, entity)) {
+            batCount++;
+            averagePos += registry.motions.get(otherEntity).position;
+        }
+    }
+
+    return (batCount > 1) ? CalculateGroupVector(entityMotion, averagePos, batCount) : vec2(0, 0);
 }
 
-vec2 AISystem::seperate_boid(Entity& e) {
-	vec2 end_velocity = {0,0};
-	int batcount = 0;
-	Motion& entity_motion = registry.motions.get(e);
-	for (Entity other_entity : registry.hasAIs.entities) {
-		HasAI& other_entity_ai = registry.hasAIs.get(other_entity);
-		if (other_entity == e || other_entity_ai.type != AIType::Bat) continue;
+vec2 AISystem::SeparateBoid(Entity& entity) {
+    int batCount = 0;
+    vec2 endVelocity = {0, 0};
+    Motion& entityMotion = registry.motions.get(entity);
 
-		Motion& other_entity_motion = registry.motions.get(other_entity);
-		if (isNearby(entity_motion,other_entity_motion,50)) {
-			end_velocity -= (entity_motion.position - other_entity_motion.position);
-			batcount += 1;
-		}
-	}
-	if (batcount > 1) {
-	end_velocity = end_velocity / vec2(batcount - 1,batcount - 1);
-	float magnitude = sqrt((end_velocity.x * end_velocity.x) + (end_velocity.y * end_velocity.y));
-	magnitude = std::max(0.001f, magnitude);
-	end_velocity = end_velocity / vec2(magnitude,magnitude);
-	end_velocity = end_velocity * vec2(entity_motion.speed,entity_motion.speed);
-	}
-	return -end_velocity * BOID_SEPERATE_RATIO;
+    for (Entity otherEntity : registry.hasAIs.entities) {
+        if (ShouldSeparateFrom(otherEntity, entity)) {
+            endVelocity -= (entityMotion.position - registry.motions.get(otherEntity).position);
+            batCount++;
+        }
+    }
+
+    return (batCount > 1) ? CalculateSeparateVector(entityMotion, endVelocity, batCount) : vec2(0, 0);
 }
 
-vec2 AISystem::match_velocity_boid(Entity& e) {
-	int batcount = 0;
-	vec2 average_velocity = {0,0};
-	Motion& entity_motion = registry.motions.get(e);
-	for (Entity other_entity : registry.hasAIs.entities) {
-		Motion& other_entity_motion = registry.motions.get(other_entity);
-		HasAI& other_entity_ai = registry.hasAIs.get(other_entity);
-		if (other_entity == e || other_entity_ai.type != AIType::Bat || !isNearby(entity_motion,other_entity_motion,BOID_GROUPING_RADIUS)) continue;
-		batcount += 1;
-		average_velocity += other_entity_motion.velocity;
-	}
-	if (batcount > 1) { 
-	average_velocity = average_velocity/vec2(batcount - 1,batcount - 1);
-	float magnitude = sqrt(pow(average_velocity.x, 2) + pow(average_velocity.y, 2));
-	magnitude = std::max(0.001f, magnitude);
-	average_velocity = average_velocity / vec2(magnitude,magnitude);
-	average_velocity = average_velocity * vec2(entity_motion.speed,entity_motion.speed);
+vec2 AISystem::MatchVelocityBoid(Entity& entity) {
+    int batCount = 0;
+    vec2 averageVelocity = {0, 0};
+    Motion& entityMotion = registry.motions.get(entity);
 
-	return (average_velocity - registry.motions.get(e).velocity) * BOID_MATCH_RATIO /vec2(50,50);
-	} else return vec2(0,0);
+    for (Entity otherEntity : registry.hasAIs.entities) {
+        if (ShouldConsiderForGrouping(otherEntity, entity)) {
+            batCount++;
+            averageVelocity += registry.motions.get(otherEntity).velocity;
+        }
+    }
+
+    return (batCount > 1) ? CalculateMatchVelocityVector(entityMotion, averageVelocity, batCount) : vec2(0, 0);
 }
 
-vec2 AISystem::chase_player_boid(Entity& e) {
-	Motion& entity_motion = registry.motions.get(e);
-	Motion& player_motion = registry.motions.get(player_entity);
-	HasAI& ai = registry.hasAIs.get(e);
-	vec2 diff = player_motion.position - entity_motion.position;
-	if (!isNearby(entity_motion,player_motion,ai.detectionRadius)) return vec2(0,0);
-	if (diff.x == 0 || diff.y == 0) {
-		return vec2(0,0);
-	}
-	float ratio = entity_motion.speed / sqrt(pow(player_motion.position.x - entity_motion.position.x, 2) + pow(player_motion.position.y - entity_motion.position.y, 2));
-	return vec2(ratio * (player_motion.position.x - entity_motion.position.x), ratio * (player_motion.position.y - entity_motion.position.y)) * vec2(BOID_CHASE_RATIO,BOID_CHASE_RATIO);
+vec2 AISystem::ChasePlayerBoid(Entity& entity) {
+    Motion& entityMotion = registry.motions.get(entity);
+    Motion& playerMotion = registry.motions.get(playerEntity);
+    HasAI& ai = registry.hasAIs.get(entity);
+
+    if (!IsNearby(entityMotion, playerMotion, ai.detectionRadius)) {
+        return vec2(0, 0);
+    }
+
+    return CalculateChaseVector(entityMotion, playerMotion, ai);
 }
 
-void AISystem::avoid_walls_boid(Entity& e) {
-	Motion& entity_motion = registry.motions.get(e);
-	float dx = window_width_px - entity_motion.position.x;
-	float dy = window_height_px - entity_motion.position.y;
-	vec2 out_vector = {0,0};
-	if (dx < BOID_WALL_AVOID_DIST) {
-		entity_motion.velocity = vec2(-entity_motion.speed,entity_motion.velocity.y);
-	}
-	if (BOID_WALL_AVOID_DIST > window_width_px - dx) {
-		entity_motion.velocity = vec2(entity_motion.speed,entity_motion.velocity.y);
-	}
-	if (dy < BOID_WALL_AVOID_DIST) {
-		entity_motion.velocity = vec2(entity_motion.velocity.x,-entity_motion.speed);
-	}
-	if (BOID_WALL_AVOID_DIST > window_height_px - dy) {
-		entity_motion.velocity = vec2(entity_motion.velocity.x,entity_motion.speed);
-	}
+void AISystem::AvoidWallsBoid(Entity& entity) {
+    Motion& entityMotion = registry.motions.get(entity);
+    AdjustVelocityForWalls(entityMotion);
+}
 
+// Helpers
+vec2 AISystem::CalculateMatchVelocityVector(Motion& entityMotion, vec2 averageVelocity, int batCount) {
+    averageVelocity = averageVelocity / vec2(batCount - 1, batCount - 1);
+    return Normalize(averageVelocity - entityMotion.velocity) * vec2(entityMotion.speed, entityMotion.speed) * BOID_MATCH_RATIO / vec2(50, 50);
+}
+
+vec2 AISystem::CalculateChaseVector(Motion& entityMotion, Motion& playerMotion, HasAI& ai) {
+    vec2 diff = playerMotion.position - entityMotion.position;
+    float ratio = entityMotion.speed / sqrt(pow(diff.x, 2) + pow(diff.y, 2));
+    return vec2(ratio * diff.x, ratio * diff.y) * vec2(BOID_CHASE_RATIO, BOID_CHASE_RATIO);
+}
+
+void AISystem::AdjustVelocityForWalls(Motion& entityMotion) {
+    float dx = windowWidthPx - entityMotion.position.x;
+    float dy = windowHeightPx - entityMotion.position.y;
+
+    if (dx < BOID_WALL_AVOID_DIST) {
+        entityMotion.velocity = vec2(-entityMotion.speed, entityMotion.velocity.y);
+    } else if (windowWidthPx - dx < BOID_WALL_AVOID_DIST) {
+        entityMotion.velocity = vec2(entityMotion.speed, entityMotion.velocity.y);
+    }
+
+    if (dy < BOID_WALL_AVOID_DIST) {
+        entityMotion.velocity = vec2(entityMotion.velocity.x, -entityMotion.speed);
+    } else if (windowHeightPx - dy < BOID_WALL_AVOID_DIST) {
+        entityMotion.velocity = vec2(entityMotion.velocity.x, entityMotion.speed);
+    }
+}
+
+bool AISystem::ShouldConsiderForGrouping(Entity otherEntity, Entity entity) {
+    Motion& otherEntityMotion = registry.motions.get(otherEntity);
+    HasAI& otherEntityAI = registry.hasAIs.get(otherEntity);
+    Motion& entityMotion = registry.motions.get(entity);
+
+    return otherEntity != entity &&
+           otherEntityAI.type == AIType::Bat &&
+           IsNearby(otherEntityMotion, entityMotion, BOID_GROUPING_RADIUS);
+}
+
+bool AISystem::ShouldSeparateFrom(Entity otherEntity, Entity entity) {
+    Motion& otherEntityMotion = registry.motions.get(otherEntity);
+    HasAI& otherEntityAI = registry.hasAIs.get(otherEntity);
+    Motion& entityMotion = registry.motions.get(entity);
+
+    return otherEntity != entity &&
+           otherEntityAI.type == AIType::Bat &&
+           IsNearby(entityMotion, otherEntityMotion, 50);
+}
+
+vec2 AISystem::CalculateGroupVector(Motion& entityMotion, vec2 averagePos, int batCount) {
+    vec2 distanceToCenter = (averagePos / vec2(batCount - 1, batCount - 1)) - entityMotion.position;
+    return distanceToCenter * BOID_GROUP_RATIO / vec2(50, 50);
+}
+
+vec2 AISystem::CalculateSeparateVector(Motion& entityMotion, vec2 endVelocity, int batCount) {
+    endVelocity = endVelocity / vec2(batCount - 1, batCount - 1);
+    return Normalize(endVelocity) * vec2(entityMotion.speed, entityMotion.speed) * -BOID_SEPERATE_RATIO;
+}
+
+vec2 AISystem::Normalize(vec2 vector) {
+    float magnitude = sqrt(pow(vector.x, 2) + pow(vector.y, 2));
+    magnitude = std::max(0.001f, magnitude);
+    return vector / vec2(magnitude, magnitude);
 }
 
 AISystem::AISystem()
 {
-	//we only need one of these - it only stores information relevant to the current ai and it's continually updated 
-	status = new AIStatus();
+    status = new AIStatus();
 
-	//behavior tree diagrams included in Work Samples submission for clarity
+    skeletonCurrentNode = CreateSkeletonBehaviorTree();
+    goblinCurrentNode = CreateGoblinBehaviorTree();
+    mushroomCurrentNode = CreateMushroomBehaviorTree();
+}
 
-	//Skeleton behavior tree:
-	Selector* SKRoot = new Selector();
-	//Roots are their own parents so they can loop on themselves when the game steps
-	SKRoot->setParent(SKRoot);
+//Tree creation functions
+Node* AISystem::CreateSkeletonBehaviorTree() {
+    Selector* root = CreateRootNode();
 
-		Patrol* SKPatrol = new Patrol();
-		SKPatrol->setParent(SKRoot);
-		SKPatrol->setStatus(status);
+    Patrol* patrol = CreatePatrolNode(root);
+    Sequence* chaseSequence = CreateChaseSequenceNode(root, {new ChasePlayer(), new AttackPlayer()});
 
-		Sequence* SKChaseSequence = new Sequence();
-		SKChaseSequence->setParent(SKRoot);
+    root->addChild(patrol);
+    root->addChild(chaseSequence);
 
-			ChasePlayer* SKChase = new ChasePlayer();
-			SKChase->setParent(SKChaseSequence);
-			SKChase->setStatus(status);
+    return root;
+}
 
-			AttackPlayer* SKAttack = new AttackPlayer();
-			SKAttack->setParent(SKChaseSequence);
-			SKAttack->setStatus(status);
+Node* AISystem::CreateGoblinBehaviorTree() {
+    Selector* root = CreateRootNode();
 
+    Patrol* patrol = CreatePatrolNode(root);
+    Sequence* playerSpotSequence = CreateSequenceNode(root);
 
-	SKRoot->addChild(SKPatrol);
-	SKRoot->addChild(SKChaseSequence);
-	SKChaseSequence->addChild(SKChase);
-	SKChaseSequence->addChild(SKAttack);
-	skeleton_current_node = SKRoot;
+    StalkPlayer* stalk = CreateStalkPlayerNode(playerSpotSequence);
+    Sequence* chaseSequence = CreateChaseSequenceNode(playerSpotSequence, {new ChasePlayer(), new AttackPlayer()});
 
-	//goblin behavior tree:
-	Selector* GBRoot = new Selector();
-	GBRoot->setParent(GBRoot);
+    playerSpotSequence->addChild(stalk);
+    playerSpotSequence->addChild(chaseSequence);
 
-		Patrol* GBPatrol = new Patrol();
-		GBPatrol->setParent(GBRoot);
-		GBPatrol->setStatus(status);
+    root->addChild(patrol);
+    root->addChild(playerSpotSequence);
 
-		Sequence* GBPlayerSpotSequence = new Sequence();
-		GBPlayerSpotSequence->setParent(GBRoot);
+    return root;
+}
 
-			StalkPlayer* GBStalk = new StalkPlayer();
-			GBStalk->setParent(GBPlayerSpotSequence);
-			GBStalk->setStatus(status);
+Node* AISystem::CreateMushroomBehaviorTree() {
+    Selector* root = CreateRootNode();
 
-			Sequence* GBChaseSequence = new Sequence();
-			GBChaseSequence->setParent(GBPlayerSpotSequence);
+    Patrol* patrol = CreatePatrolNode(root);
+    Sequence* chaseSequence = CreateChaseSequenceNode(root, {new ChasePlayer(), new AttackPlayer()});
 
-				ChasePlayer* GBChase = new ChasePlayer();
-				GBChase->setParent(GBChaseSequence);
-				GBChase->setStatus(status);
+    root->addChild(patrol);
+    root->addChild(chaseSequence);
 
-				AttackPlayer* GBAttack = new AttackPlayer();
-				GBAttack->setParent(GBChaseSequence);
-				GBAttack->setStatus(status);
+    return root;
+}
 
-			GBChaseSequence->addChild(GBChase);
-			GBChaseSequence->addChild(GBAttack);
+//Tree creation helpers
+Selector* AISystem::CreateRootNode() {
+    Selector* root = new Selector();
+    root->setParent(root);
+    return root;
+}
 
-		GBPlayerSpotSequence->addChild(GBStalk);
-		GBPlayerSpotSequence->addChild(GBChaseSequence);
-	
-	GBRoot->addChild(GBPatrol);
-	GBRoot->addChild(GBPlayerSpotSequence);
-	goblin_current_node = GBRoot;
+Patrol* AISystem::CreatePatrolNode(Node* parent) {
+    Patrol* patrol = new Patrol();
+    patrol->setParent(parent);
+    patrol->setStatus(status);
+    return patrol;
+}
 
+Sequence* AISystem::CreateChaseSequenceNode(Node* parent, std::initializer_list<Node*> children) {
+    Sequence* sequence = new Sequence();
+    sequence->setParent(parent);
 
-	//Mushroom behavior tree:
-	Selector* MSRoot = new Selector();
-	MSRoot->setParent(MSRoot);
+    for (Node* child : children) {
+        child->setParent(sequence);
+        child->setStatus(status);
+        sequence->addChild(child);
+    }
 
-		Patrol* MSPatrol = new Patrol();
-		MSPatrol->setParent(MSRoot);
-		MSPatrol->setStatus(status);
+    return sequence;
+}
 
-		Sequence* MSChaseSequence = new Sequence();
-		MSChaseSequence->setParent(MSRoot);
+Sequence* AISystem::CreateSequenceNode(Node* parent) {
+    Sequence* sequence = new Sequence();
+    sequence->setParent(parent);
+    return sequence;
+}
 
-			ChasePlayer* MSChase = new ChasePlayer();
-			MSChase->setParent(MSChaseSequence);
-			MSChase->setStatus(status);
-
-			AttackPlayer* MSAttack = new AttackPlayer();
-			MSAttack->setParent(MSChaseSequence);
-			MSAttack->setStatus(status);
-
-
-	MSRoot->addChild(MSPatrol);
-	MSRoot->addChild(MSChaseSequence);
-	MSChaseSequence->addChild(MSChase);
-	MSChaseSequence->addChild(SKAttack);
-	mushroom_current_node = MSRoot;
+StalkPlayer* AISystem::CreateStalkPlayerNode(Node* parent) {
+    StalkPlayer* stalk = new StalkPlayer();
+    stalk->setParent(parent);
+    stalk->setStatus(status);
+    return stalk;
 }
